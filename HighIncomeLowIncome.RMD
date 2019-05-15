@@ -1,0 +1,573 @@
+---
+title: "Using Logistic Regression for Machine Learning Predictions"
+author: "Satya Vrat Singh"
+date: "January 12, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Prediction of whether the individual belongs to low income group or high income group  
+
+###Abstract - Implementation 
+* Lower-income families may face unique challenges in health plans.    
+* This break point between lower and higher incomes can be chosen for the policy relevance as the threshold for subsidies under different categories (Healthcare,BPL card, etc).     
+* Those in higher-income households are more likely to use the internet on any given day, own multiple internet-ready devices, do things involving money online, and get news online  
+
+* Clear the environment
+
+```{r}
+rm(list=ls(all=TRUE))
+```
+
+```{r include=FALSE}
+# Load libraries
+library(DMwR)  #for knn imputation
+library(caret) #for statified random sampling(to avoid class imbalance)
+library(ROCR)  #Using the ROCR package create a "prediction()" object
+library(e1071) #for Naive Bayes implementation
+```
+```{r include=FALSE}
+# getwd()
+setwd("D:\\D\\INSOFE\\Week 9 (12-13.01.2019) - CUTe2\\CSE7302c_CUTe")
+```
+#Agenda
+* Get the data
+* Data Pre-processing
+* Build a model
+* Predictions
+* Analysis
+
+#Reading & Understanding the Data  
+* Make sure the dataset is located in your current working directory
+```{r}
+population_dataset = read.csv("train_data.csv")
+```
+
+* Use the str(), summary() functions to get a feel for the dataset.
+```{r}
+str(population_dataset)
+```
+* The dataset has 31587 observations of 18 variables.  
+```{r}
+summary(population_dataset)
+```
+
+
+
+```{r}
+#See the head of the dataframe
+head(population_dataset)
+```
+
+###Exploratory Data Analysis - Cheking the spread of data over target (dependent variable)
+```{r}
+table(population_dataset$target)
+```
+* Plot
+```{r}
+barplot(table(population_dataset$target), 
+        main="Population Income Category",
+        xlab="Income Category", ylab = "Count",
+        col = c('orange','red'),
+        ylim=c(0,30000))
+```
+
+* Have to do to stratified random sampling during split as the target variable is categirical and has class imbalance
+
+#Data Pre-processing
+
+* Checking for missing Values
+```{r}
+sum(is.na(population_dataset))
+```
+
+* Checking the number of missing values per column in the data frame
+```{r}
+colSums(is.na(population_dataset))
+```
+##Handling NA values 
+* There are four ways in which we can handle missing values:  
+**1.Deleting the observations for NA values.**   
+      Observing NA values for minority class i.e for target = 1 (to take either of decision)  
+```{r}
+colSums(is.na(population_dataset) & population_dataset$target == 1) 
+```
+     Many records for minority class, thus should not be implemented  
+**2.Deleting the features (which should be avoided in early phase)**  
+**3.Imputation with mean / median / mode (mean/median cannot be applied as there is categorical data)**  
+
+#####Columns having NA values:  
+*	age: 	            int  
+*	working_sector:	  Factor w/ 7 levels  
+*	financial_weight:	int  
+*	qualification:	    Factor w/ 16 levels  
+*	tax_paid:	        num  
+*	occupation:	      Factor w/ 14 levels  
+*	relationship:	    Factor w/ 6 levels  
+*	ethnicity:	        Factor w/ 5 levels  
+*	gender:	          Factor w/ 2 levels  
+*	gain:	            int  
+*	loss:	            int  
+*	working_hours:	    int  
+*	country:	          Factor w/ 41 levels  
+**4.Prediction:** Prediction is most advanced method to impute your missing values and includes different approaches such as: kNN Imputation  
+
+####KNN Imputation, k=179 (sqrt(n))  
+```{r}
+population_dataset = knnImputation(population_dataset, k=179)
+sum(is.na(population_dataset))
+```
+0 NA values after imputation
+
+##Train/Test Split  
+Split the data 70/30 into train and test sets by using Stratified Sampling and setting the seed as "770"  
+Split the data using stratified sampling, we can do that by using the createDataPartition() function from the caret package  
+```{r}
+population_dataset$target = as.factor(population_dataset$target)
+set.seed(770)
+# The argument "target" to the createDataPartition() function is the response variable
+# The argument "p" is the percentage of data that goes to training
+# The argument "list" should be input a boolean (T or F). Put list = F, else the output is going to be a list and your data can't be subsetted with it
+train_rows = createDataPartition(population_dataset$target, p = 0.7, list = F)
+train_data = population_dataset[train_rows,] #train data
+test_data = population_dataset[-train_rows,] #test data
+```
+##### See the distribution of the target class in both train and test dataset
+```{r}
+table(train_data$target)
+```
+```{r}
+table(test_data$target)
+```
+
+#Build a model  
+####Basic Logistic Regression Model  
+*Use the glm() function to build a basic model  
+*Building a model using all the variables, excluding the response variable, in the dataset  
+```{r}
+log_reg <- glm(target~., data = train_data, family = binomial)
+```
+Get the summary of the model and understand the output  
+```{r}
+summary(log_reg)
+```
+
+#Creating an ROC plot  
+```{r}
+prob_train = predict(log_reg, type = "response")
+pred = prediction(prob_train, train_data$target)
+perf = performance(pred, measure="tpr", x.measure="fpr")
+plot(perf, col=rainbow(10), colorize=T, print.cutoffs.at=seq(0,1,0.05))
+```
+
+* Extract the AUC score of the ROC curve and store it in a variable named "auc"  
+* Use the performance() function on the prediction object created above using the ROCR package, to extract the AUC score  
+```{r}
+perf_auc = performance(pred, measure="auc")
+# Access the auc score from the performance object
+auc = perf_auc@y.values[[1]]
+print(auc)
+```
+
+##Choose a Cutoff Value  (hyper-parameter) VALIDATION
+* Based on the trade off between TPR and FPR depending on the business domain, a call on the cutoff has to be made.  
+
+```{r}
+prob_test = predict(log_reg, test_data, type = "response")
+preds_test = ifelse(prob_test > 0.1, "1", "0") 
+preds_test = data.frame(preds_test)
+confusionMatrix(preds_test$preds_test, test_data$target)
+#Accuracy : 0.7217 Kappa : 0.4397  
+```
+
+```{r}
+prob_test = predict(log_reg, test_data, type = "response")
+preds_test = ifelse(prob_test > 0.2, "1", "0") 
+preds_test = data.frame(preds_test)
+confusionMatrix(preds_test$preds_test, test_data$target)
+#Accuracy : 0.7939 Kappa : 0.5331
+```
+```{r}
+prob_test = predict(log_reg, test_data, type = "response")
+preds_test = ifelse(prob_test > 0.25, "1", "0")
+preds_test = data.frame(preds_test)
+confusionMatrix(preds_test$preds_test, test_data$target)
+#Accuracy : 0.814 Kappa : 0.5554  
+```
+```{r}
+prob_test = predict(log_reg, test_data, type = "response")
+preds_test = ifelse(prob_test > 0.3, "1", "0") 
+preds_test = data.frame(preds_test)
+confusionMatrix(preds_test$preds_test, test_data$target)
+#Accuracy :  0.832 Kappa : 0.5769  
+```
+```{r}
+prob_test = predict(log_reg, test_data, type = "response")
+preds_test = ifelse(prob_test > 0.35, "1", "0") 
+preds_test = data.frame(preds_test)
+confusionMatrix(preds_test$preds_test, test_data$target)
+#Accuracy : 0.8423 Kappa : 0.5842
+```
+```{r}
+prob_test = predict(log_reg, test_data, type = "response")
+preds_test = ifelse(prob_test > 0.4, "1", "0") 
+preds_test = data.frame(preds_test)
+confusionMatrix(preds_test$preds_test, test_data$target)
+#Accuracy : 0.8494 Kappa : 0.5856  
+```
+```{r}
+prob_test = predict(log_reg, test_data, type = "response")
+preds_test = ifelse(prob_test > 0.45, "1", "0") 
+preds_test = data.frame(preds_test)
+confusionMatrix(preds_test$preds_test, test_data$target)
+#Accuracy : 0.8513 Kappa : 0.575  
+```
+
+* A cutoff of 0.45 can be chosen
+
+
+###Feature Engineering   
+* Droping least significant columns  
+```{r}
+population_dataset = subset(population_dataset, 
+                            select =
+                              -c(qualification,country,ethnicity))
+```                            
+###Convert the index column to the row names, as this is unique  
+```{r}
+rownames(population_dataset) = population_dataset$index
+#Drop the index column
+population_dataset$index = NULL
+```                            
+
+###Converting "loan_taken","marital_status" to categorical 
+```{r}
+CategoricalCol = function(x){
+  as.factor(population_dataset[,x])
+}
+ColNames = c("loan_taken")
+population_dataset[,ColNames] = lapply(ColNames, CategoricalCol)
+```
+#Rebuilding the model after Feature Engineering  
+##Train/Test Split  
+
+```{r}
+set.seed(770)
+train_rows = createDataPartition(population_dataset$target, p = 0.7, list = F)
+train_data = population_dataset[train_rows,] #train data
+test_data = population_dataset[-train_rows,] #test data
+```
+```{r}
+log_reg = glm(target~., data = train_data, family = binomial)
+```
+
+#Calculating AUC after Feature Engineering 
+```{r}
+prob_train = predict(log_reg, type = "response")
+pred = prediction(prob_train, train_data$target)
+
+perf_auc = performance(pred, measure="auc")
+# Access the auc score from the performance object
+auc = perf_auc@y.values[[1]]
+print(auc)
+```
+
+
+
+#VALIDATION (for a cutoff of 0.45)  
+```{r}
+prob_test = predict(log_reg, test_data, type = "response")
+preds_test = ifelse(prob_test > 0.45, "1", "0") 
+preds_test = data.frame(preds_test)
+confusionMatrix(preds_test$preds_test, test_data$target)
+#Accuracy : 0.8509 Kappa : 0.5742 
+```
+#Model Accuracy  
+####Accuracy : 0.8509  
+####Kappa : 0.5742   
+
+
+#Applying model on given Test Data (unseen data) to predict 
+```{r}
+test_dataset = read.csv("test_data.csv")
+test_dataset = subset(test_dataset, 
+                            select =
+                              -c(qualification,country,ethnicity))
+							  
+rownames(test_dataset) <- test_dataset$index
+#Drop the index column
+test_dataset$index = NULL
+test_dataset <-knnImputation(test_dataset , k=33, meth = "median")
+
+	 
+CategoricalCol = function(x){
+  as.factor(test_dataset[,x])
+}
+ColNames = c("loan_taken")
+test_dataset[,ColNames] = lapply(ColNames, CategoricalCol)
+
+#Applying regression on Test Data (unseen data) to predict 
+prob_test <- predict(log_reg, test_dataset, type = "response")
+head(prob_test)
+ApproxPredict = ifelse(prob_test > 0.45, "1", "0")
+ApproxPredict = data.frame(ApproxPredict)
+print(ApproxPredict)
+```
+
+
+# Using Naive Bayes for Machine Learning Predictions  
+
+###Read and Understand the Data  
+* Irrelevant columns to be dropped  
+```{r}
+population_dataset = read.csv("train_data.csv")
+rownames(population_dataset) <- population_dataset$index
+#Drop the index column
+population_dataset$index = NULL
+
+population_dataset = subset(population_dataset, 
+                            select =
+                              -c(qualification,country,ethnicity,tax_paid))
+```
+##Convert the attributes to appropriate types  
+* For the Naive Bayes implementation in the e1071 package, we have to send in our data in a categorical format, so we have to make the appropriate data type coversions.
+```{r}
+population_dataset$age = ifelse( population_dataset$age>=1 & 
+                           population_dataset$age<=20, "Young", 
+                         ifelse(population_dataset$age>=21 & 
+                                  population_dataset$age<=40, "Mature", 
+                                ifelse(population_dataset$age>=41 & 
+                                         population_dataset$age<=60, "Old", 
+                                       "Retired")))
+population_dataset$marital_status = 
+  ifelse( population_dataset$marital_status 
+          %in% c("Divorced", "Never-married", "Separated","Widowed"),"Single",
+  ifelse(population_dataset$marital_status 
+         %in% c("Married-defence","Married-civilian","Married-non-resident"), "Married",""))
+
+head(population_dataset)
+
+population_dataset$financial_weight = 
+  ifelse( population_dataset$financial_weight>=1 
+          & population_dataset$financial_weight<=494901, "financelevel1", 
+  ifelse(population_dataset$financial_weight>=494902 
+         & population_dataset$financial_weight<=989808, "financelevel2", "financelevel3"))
+
+population_dataset$years_of_education = 
+  ifelse( population_dataset$years_of_education>=1 
+          & population_dataset$years_of_education<=4, "edulevel1", 
+  ifelse(population_dataset$years_of_education>=5  
+          & population_dataset$years_of_education<=8, "edulevel2", 
+   ifelse(population_dataset$years_of_education>=9 
+          & population_dataset$years_of_education<=12,"edulevel3",
+          "edulevel4")))
+
+population_dataset$gain = 
+  ifelse( population_dataset$gain>=1 
+          & population_dataset$gain<=1409, "gainlevel1", 
+  ifelse(population_dataset$gain>=1410 
+          & population_dataset$gain<=2062, "gainlevel2", 
+  ifelse(population_dataset$gain>=2063
+          & population_dataset$gain<=2414,"gainlevel3",
+  ifelse( population_dataset$gain>=2415 
+          & population_dataset$gain<=2964, "gainlevel4", 
+  ifelse(population_dataset$gain>=2965  
+          & population_dataset$gain<=3471, "gainlevel5", 
+  ifelse(population_dataset$gain>=3472 
+          & population_dataset$gain<=4650,"gainlevel6",
+          ifelse( population_dataset$gain>=4651 
+          & population_dataset$gain<=6097, "gainlevel7", 
+  ifelse(population_dataset$gain>=6098  
+          & population_dataset$gain<=7896, "gainlevel8", 
+  ifelse(population_dataset$gain>=7897 
+          & population_dataset$gain<=15020,"gainlevel9","gainlevel10")))))))))
+
+population_dataset$loss = 
+  ifelse( population_dataset$loss>=1 
+          & population_dataset$loss<=1138, "losslevel1", 
+  ifelse(population_dataset$loss>=1139 
+          & population_dataset$loss<=1590, "losslevel2", 
+  ifelse(population_dataset$loss>=1591
+          & population_dataset$loss<=1726,"losslevel3",
+  ifelse( population_dataset$loss>=1727 
+          & population_dataset$loss<=1902, "losslevel4", 
+  ifelse(population_dataset$loss>=1903  
+          & population_dataset$loss<=2149, "losslevel5", 
+  ifelse(population_dataset$loss>=2150 
+          & population_dataset$loss<=2282,"losslevel6",
+          ifelse( population_dataset$loss>=2283 
+          & population_dataset$loss<=2559, "losslevel7","losslevel8")))))))
+
+population_dataset$working_hours = 
+  ifelse( population_dataset$working_hours>=1 
+          & population_dataset$working_hours<=10, "working_hourslevel1", 
+  ifelse(population_dataset$working_hours>=11 
+          & population_dataset$working_hours<=20, "working_hourslevel2", 
+  ifelse(population_dataset$working_hours>=21
+          & population_dataset$working_hours<=30,"working_hourslevel3",
+  ifelse( population_dataset$working_hours>=31 
+          & population_dataset$working_hours<=40, "working_hourslevel4", 
+  ifelse(population_dataset$working_hours>=41  
+          & population_dataset$working_hours<=50, "working_hourslevel5", 
+  ifelse(population_dataset$working_hours>=51 
+          & population_dataset$working_hours<=60,"working_hourslevel6",
+          ifelse( population_dataset$working_hours>=61 
+          & population_dataset$working_hours<=70, "working_hourslevel7", 
+  ifelse(population_dataset$working_hours>=71  
+          & population_dataset$working_hours<=80, "working_hourslevel8", 
+  ifelse(population_dataset$working_hours>=81 
+          & population_dataset$working_hours<=90,"working_hourslevel9",
+         "working_hourslevel10")))))))))
+
+
+CategoricalCol = function(x){
+  as.factor(population_dataset[,x])
+}
+ColNames = c("loan_taken","marital_status","age",
+             "financial_weight","years_of_education",
+             "gain","loss","working_hours","target")
+population_dataset[,ColNames] = lapply(ColNames, CategoricalCol)
+
+str(population_dataset)
+```
+
+```{r}
+train_rows = createDataPartition(population_dataset$target,p=0.7,list=F)
+train = population_dataset[train_rows,]
+test = population_dataset[-train_rows, ]
+
+```
+#Build the Naive Bayes Classifier  
+```{r}
+library(e1071)
+model_nb <- naiveBayes(train$target~., train)
+print(model_nb)
+```
+
+#Measure the Model Performace on test data  
+* Use the confusionMatrix() function from the caret package to look at the various performance metrics  
+
+```{r}
+preds = predict(model_nb, test)
+confusionMatrix(data = preds, reference = test$target, positive = "1")
+```
+
+#Model Accuracy  
+####Accuracy : 0.8153  
+####Kappa : 0.5377  
+
+
+#Applying model on given Test Data (unseen data) to predict 
+```{r}
+test = read.csv("test_data.csv")
+rownames(test) = test$index
+#Drop the index column
+test$index = NULL
+test = subset(test, select = -c(qualification,country,ethnicity,tax_paid))
+							  
+test$age = ifelse( test$age>=1 & 
+                           test$age<=20, "Young", 
+                         ifelse(test$age>=21 & 
+                                  test$age<=40, "Mature", 
+                                ifelse(test$age>=41 & 
+                                         test$age<=60, "Old", 
+                                       "Retired")))
+test$marital_status = 
+  ifelse( test$marital_status 
+          %in% c("Divorced", "Never-married", "Separated","Widowed"),"Single",
+  ifelse(test$marital_status 
+         %in% c("Married-defence","Married-civilian","Married-non-resident"), "Married",""))
+
+head(test)
+
+test$financial_weight = 
+  ifelse( test$financial_weight>=1 
+          & test$financial_weight<=494901, "financelevel1", 
+  ifelse(test$financial_weight>=494902 
+         & test$financial_weight<=989808, "financelevel2", "financelevel3"))
+
+test$years_of_education = 
+  ifelse( test$years_of_education>=1 
+          & test$years_of_education<=4, "edulevel1", 
+  ifelse(test$years_of_education>=5  
+          & test$years_of_education<=8, "edulevel2", 
+   ifelse(test$years_of_education>=9 
+          & test$years_of_education<=12,"edulevel3",
+          "edulevel4")))
+
+test$gain = 
+  ifelse( test$gain>=1 
+          & test$gain<=1409, "gainlevel1", 
+  ifelse(test$gain>=1410 
+          & test$gain<=2062, "gainlevel2", 
+  ifelse(test$gain>=2063
+          & test$gain<=2414,"gainlevel3",
+  ifelse( test$gain>=2415 
+          & test$gain<=2964, "gainlevel4", 
+  ifelse(test$gain>=2965  
+          & test$gain<=3471, "gainlevel5", 
+  ifelse(test$gain>=3472 
+          & test$gain<=4650,"gainlevel6",
+          ifelse( test$gain>=4651 
+          & test$gain<=6097, "gainlevel7", 
+  ifelse(test$gain>=6098  
+          & test$gain<=7896, "gainlevel8", 
+  ifelse(test$gain>=7897 
+          & test$gain<=15020,"gainlevel9","gainlevel10")))))))))
+
+test$loss = 
+  ifelse( test$loss>=1 
+          & test$loss<=1138, "losslevel1", 
+  ifelse(test$loss>=1139 
+          & test$loss<=1590, "losslevel2", 
+  ifelse(test$loss>=1591
+          & test$loss<=1726,"losslevel3",
+  ifelse( test$loss>=1727 
+          & test$loss<=1902, "losslevel4", 
+  ifelse(test$loss>=1903  
+          & test$loss<=2149, "losslevel5", 
+  ifelse(test$loss>=2150 
+          & test$loss<=2282,"losslevel6",
+          ifelse( test$loss>=2283 
+          & test$loss<=2559, "losslevel7","losslevel8")))))))
+
+test$working_hours = 
+  ifelse( test$working_hours>=1 
+          & test$working_hours<=10, "working_hourslevel1", 
+  ifelse(test$working_hours>=11 
+          & test$working_hours<=20, "working_hourslevel2", 
+  ifelse(test$working_hours>=21
+          & test$working_hours<=30,"working_hourslevel3",
+  ifelse( test$working_hours>=31 
+          & test$working_hours<=40, "working_hourslevel4", 
+  ifelse(test$working_hours>=41  
+          & test$working_hours<=50, "working_hourslevel5", 
+  ifelse(test$working_hours>=51 
+          & test$working_hours<=60,"working_hourslevel6",
+          ifelse( test$working_hours>=61 
+          & test$working_hours<=70, "working_hourslevel7", 
+  ifelse(test$working_hours>=71  
+          & test$working_hours<=80, "working_hourslevel8", 
+  ifelse(test$working_hours>=81 
+          & test$working_hours<=90,"working_hourslevel9",
+         "working_hourslevel10")))))))))
+
+
+CategoricalCol = function(x){
+  as.factor(test[,x])
+}
+ColNames = c("loan_taken","marital_status","age",
+             "financial_weight","years_of_education",
+             "gain","loss","working_hours")
+test[,ColNames] = lapply(ColNames, CategoricalCol)
+
+ApproxPredict = predict(model_nb, test)
+ApproxPredict = data.frame(ApproxPredict)
+print(ApproxPredict)
+```
+
+
+
